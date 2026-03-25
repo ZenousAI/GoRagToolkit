@@ -26,6 +26,14 @@ import (
 	"github.com/zenousai/goragtoolkit/message"
 )
 
+// WarnFunc is called when the tokenizer falls back to estimation due to an
+// initialization error. Override this to integrate with your logging framework.
+//
+//	tokenizer.WarnFunc = func(format string, args ...any) {
+//	    zap.S().Warnf(format, args...)
+//	}
+var WarnFunc func(format string, args ...any) = log.Printf
+
 // Provider identifies the model provider
 type Provider string
 
@@ -163,7 +171,7 @@ func createTokenizer(modelName string) Tokenizer {
 	case ProviderOpenAI:
 		tok, err := newTiktokenTokenizer(modelName)
 		if err != nil {
-			log.Printf("goragtoolkit/tokenizer: accurate tokenizer failed for %q (provider=%s), falling back to estimation: %v", modelName, provider, err)
+			WarnFunc("goragtoolkit/tokenizer: accurate tokenizer failed for %q (provider=%s), falling back to estimation: %v", modelName, provider, err)
 			return newEstimator(modelName, provider)
 		}
 		return tok
@@ -171,7 +179,7 @@ func createTokenizer(modelName string) Tokenizer {
 	case ProviderAnthropic:
 		tok, err := newClaudeTokenizer(modelName)
 		if err != nil {
-			log.Printf("goragtoolkit/tokenizer: accurate tokenizer failed for %q (provider=%s), falling back to estimation: %v", modelName, provider, err)
+			WarnFunc("goragtoolkit/tokenizer: accurate tokenizer failed for %q (provider=%s), falling back to estimation: %v", modelName, provider, err)
 			return newEstimator(modelName, provider)
 		}
 		return tok
@@ -179,7 +187,7 @@ func createTokenizer(modelName string) Tokenizer {
 	case ProviderCohere:
 		tok, err := newCohereTokenizer(modelName)
 		if err != nil {
-			log.Printf("goragtoolkit/tokenizer: accurate tokenizer failed for %q (provider=%s), falling back to estimation: %v", modelName, provider, err)
+			WarnFunc("goragtoolkit/tokenizer: accurate tokenizer failed for %q (provider=%s), falling back to estimation: %v", modelName, provider, err)
 			return newEstimator(modelName, provider)
 		}
 		return tok
