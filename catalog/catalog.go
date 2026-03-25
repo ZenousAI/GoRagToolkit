@@ -107,7 +107,8 @@ func GetModelsByType(modelType ModelType) []Model {
 	return models
 }
 
-// GetModel returns a specific model by provider and name
+// GetModel returns a specific model by provider and name.
+// The returned Model is a deep copy safe to modify without affecting the catalog.
 func GetModel(provider ProviderType, name string) *Model {
 	providerCatalog := GetProviderCatalog(provider)
 	if providerCatalog == nil {
@@ -115,7 +116,12 @@ func GetModel(provider ProviderType, name string) *Model {
 	}
 	for _, m := range providerCatalog.Models {
 		if m.Name == name {
-			return &m
+			result := m
+			if m.Dimension != nil {
+				d := *m.Dimension
+				result.Dimension = &d
+			}
+			return &result
 		}
 	}
 	return nil

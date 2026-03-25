@@ -87,6 +87,9 @@ type patternSet struct {
 	comparativePatterns  []*compiledPattern
 	proceduralPatterns   []*compiledPattern
 	factualPatterns      []*compiledPattern
+	deepPatterns         []*regexp.Regexp // pre-compiled depth inference patterns
+	shallowPatterns      []*regexp.Regexp
+	noMergePatterns      []*regexp.Regexp
 }
 
 // compiledPattern holds a compiled regex and its metadata
@@ -342,69 +345,31 @@ func (p *PatternInferrer) matchPatterns(normalizedQuery string, patterns []*comp
 	return totalScore, signals
 }
 
-// inferDepth determines the expected depth of the answer
+// inferDepth determines the expected depth of the answer using pre-compiled patterns.
 func (p *PatternInferrer) inferDepth(query string) Depth {
-	// Deep depth indicators
-	deepPatterns := []string{
-		`detail`,
-		`explain.*in.*depth`,
-		`comprehensive`,
-		`thorough`,
-		`complete.*explanation`,
-		`everything.*about`,
-		`all.*details`,
-	}
-
-	// Shallow depth indicators
-	shallowPatterns := []string{
-		`brief`,
-		`quick`,
-		`summary`,
-		`overview`,
-		`short`,
-		`simple`,
-		`just`,
-		`only`,
-	}
-
-	for _, pat := range deepPatterns {
-		if matched, _ := regexp.MatchString(pat, query); matched {
+	for _, re := range p.patterns.deepPatterns {
+		if re.MatchString(query) {
 			return DepthDeep
 		}
 	}
-
-	for _, pat := range shallowPatterns {
-		if matched, _ := regexp.MatchString(pat, query); matched {
+	for _, re := range p.patterns.shallowPatterns {
+		if re.MatchString(query) {
 			return DepthShallow
 		}
 	}
-
 	return DepthMedium
 }
 
-// inferMergeAllowed determines if similar items can be merged
+// inferMergeAllowed determines if similar items can be merged.
 func (p *PatternInferrer) inferMergeAllowed(shape Shape, query string) bool {
-	// Enumerative and exhaustive shapes should not merge by default
 	if shape == ShapeEnumerative || shape == ShapeExhaustive {
 		return false
 	}
-
-	// Check for explicit "each" or "every" which indicate no merging
-	noMergePatterns := []string{
-		`\beach\b`,
-		`\bevery\b`,
-		`\bseparate`,
-		`\bdistinct`,
-		`\bindividual`,
-		`\bone by one`,
-	}
-
-	for _, pat := range noMergePatterns {
-		if matched, _ := regexp.MatchString(pat, query); matched {
+	for _, re := range p.patterns.noMergePatterns {
+		if re.MatchString(query) {
 			return false
 		}
 	}
-
 	return true
 }
 
@@ -467,7 +432,30 @@ func buildPatternSet() *patternSet {
 		comparativePatterns:  buildComparativePatterns(),
 		proceduralPatterns:   buildProceduralPatterns(),
 		factualPatterns:      buildFactualPatterns(),
+		deepPatterns: compileStringPatterns([]string{
+			`detail`, `explain.*in.*depth`, `comprehensive`, `thorough`,
+			`complete.*explanation`, `everything.*about`, `all.*details`,
+		}),
+		shallowPatterns: compileStringPatterns([]string{
+			`brief`, `quick`, `summary`, `overview`, `short`, `simple`, `just`, `only`,
+		}),
+		noMergePatterns: compileStringPatterns([]string{
+			`\beach\b`, `\bevery\b`, `\bseparate`, `\bdistinct`, `\bindividual`, `\bone by one`,
+		}),
 	}
+}
+
+// compileStringPatterns compiles a list of regex strings, skipping invalid ones.
+func compileStringPatterns(patterns []string) []*regexp.Regexp {
+	compiled := make([]*regexp.Regexp, 0, len(patterns))
+	for _, p := range patterns {
+		re, err := regexp.Compile(p)
+		if err != nil {
+			continue
+		}
+		compiled = append(compiled, re)
+	}
+	return compiled
 }
 
 func buildEnumerativePatterns() []*compiledPattern {

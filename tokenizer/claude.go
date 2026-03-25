@@ -4,7 +4,6 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 )
@@ -20,8 +19,8 @@ type claudeTokenizer struct {
 	reverseVocab  map[int]string
 	merges        []bpeMerge
 	mergePriority map[string]int // cached merge priority map, built once at init
-	initialized   bool
-	initMu        sync.Mutex
+	initOnce      sync.Once
+	initErr       error
 }
 
 // bpeMerge represents a BPE merge rule
@@ -40,32 +39,20 @@ func newClaudeTokenizer(modelName string) (*claudeTokenizer, error) {
 	return t, nil
 }
 
-// ensureInitialized loads the tokenizer data if not already loaded
+// ensureInitialized loads the tokenizer data if not already loaded.
+// Uses sync.Once for proper memory barriers in concurrent access.
 func (c *claudeTokenizer) ensureInitialized() error {
-	if c.initialized {
-		return nil
-	}
-
-	c.initMu.Lock()
-	defer c.initMu.Unlock()
-
-	if c.initialized {
-		return nil
-	}
-
-	// Try to load embedded tokenizer data
-	data, err := claudeTokenizerData.ReadFile("data/claude_tokenizer.json")
-	if err != nil {
-		// If embedded data not available, use estimation
-		return fmt.Errorf("claude tokenizer data not embedded: %w", err)
-	}
-
-	if err := c.loadTokenizerJSON(data); err != nil {
-		return err
-	}
-
-	c.initialized = true
-	return nil
+	c.initOnce.Do(func() {
+		data, err := claudeTokenizerData.ReadFile("data/claude_tokenizer.json")
+		if err != nil {
+			c.initErr = fmt.Errorf("claude tokenizer data not embedded: %w", err)
+			return
+		}
+		if err := c.loadTokenizerJSON(data); err != nil {
+			c.initErr = err
+		}
+	})
+	return c.initErr
 }
 
 // tokenizerJSON represents the HuggingFace tokenizer.json format
@@ -168,6 +155,11 @@ func preTokenize(text string) []string {
 	return words
 }
 
+// maxBPEWordLen is the maximum word length (in runes) for BPE encoding.
+// Longer words skip BPE and return character-level tokens to avoid
+// O(n^2) worst-case complexity.
+const maxBPEWordLen = 1000
+
 // bpeEncode encodes a single word using BPE.
 // Uses the pre-built mergePriority map for O(1) lookups per pair.
 func (c *claudeTokenizer) bpeEncode(word string) []string {
@@ -178,6 +170,11 @@ func (c *claudeTokenizer) bpeEncode(word string) []string {
 	}
 
 	if len(symbols) <= 1 {
+		return symbols
+	}
+
+	// Skip BPE for very long words to avoid O(n^2) worst case
+	if len(symbols) > maxBPEWordLen {
 		return symbols
 	}
 
@@ -346,18 +343,10 @@ func (c *claudeTokenizer) EncodingName() string {
 
 // IsAccurate returns true if the tokenizer data is loaded
 func (c *claudeTokenizer) IsAccurate() bool {
-	return c.initialized
+	c.ensureInitialized()
+	return c.initErr == nil
 }
 
 // Ensure claudeTokenizer implements Tokenizer
 var _ Tokenizer = (*claudeTokenizer)(nil)
 
-// Helper to sort strings for deterministic output
-func sortedKeys(m map[string]int) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}

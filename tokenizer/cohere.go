@@ -19,8 +19,8 @@ type cohereTokenizer struct {
 	reverseVocab  map[int]string
 	merges        []bpeMerge
 	mergePriority map[string]int // cached merge priority map, built once at init
-	initialized   bool
-	initMu        sync.Mutex
+	initOnce      sync.Once
+	initErr       error
 }
 
 // newCohereTokenizer creates a new Cohere tokenizer
@@ -33,32 +33,20 @@ func newCohereTokenizer(modelName string) (*cohereTokenizer, error) {
 	return t, nil
 }
 
-// ensureInitialized loads the tokenizer data if not already loaded
+// ensureInitialized loads the tokenizer data if not already loaded.
+// Uses sync.Once for proper memory barriers in concurrent access.
 func (c *cohereTokenizer) ensureInitialized() error {
-	if c.initialized {
-		return nil
-	}
-
-	c.initMu.Lock()
-	defer c.initMu.Unlock()
-
-	if c.initialized {
-		return nil
-	}
-
-	// Try to load embedded tokenizer data
-	data, err := cohereTokenizerData.ReadFile("data/cohere_tokenizer.json")
-	if err != nil {
-		// If embedded data not available, use estimation
-		return fmt.Errorf("cohere tokenizer data not embedded: %w", err)
-	}
-
-	if err := c.loadTokenizerJSON(data); err != nil {
-		return err
-	}
-
-	c.initialized = true
-	return nil
+	c.initOnce.Do(func() {
+		data, err := cohereTokenizerData.ReadFile("data/cohere_tokenizer.json")
+		if err != nil {
+			c.initErr = fmt.Errorf("cohere tokenizer data not embedded: %w", err)
+			return
+		}
+		if err := c.loadTokenizerJSON(data); err != nil {
+			c.initErr = err
+		}
+	})
+	return c.initErr
 }
 
 // loadTokenizerJSON loads tokenizer configuration from HuggingFace JSON format
@@ -137,6 +125,11 @@ func (c *cohereTokenizer) bpeEncode(word string) []string {
 	}
 
 	if len(symbols) <= 1 {
+		return symbols
+	}
+
+	// Skip BPE for very long words to avoid O(n^2) worst case
+	if len(symbols) > maxBPEWordLen {
 		return symbols
 	}
 
@@ -293,7 +286,8 @@ func (c *cohereTokenizer) EncodingName() string {
 
 // IsAccurate returns true if the tokenizer data is loaded
 func (c *cohereTokenizer) IsAccurate() bool {
-	return c.initialized
+	c.ensureInitialized()
+	return c.initErr == nil
 }
 
 // Ensure cohereTokenizer implements Tokenizer

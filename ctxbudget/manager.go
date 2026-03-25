@@ -716,8 +716,14 @@ func ReserveForShape(shape ShapeType, itemCount int) int {
 		base = DefaultResponseReserve
 	}
 
-	// Add per-item budget for list-type responses
+	// Add per-item budget for list-type responses (capped to prevent overflow)
 	if shape == ShapeEnumerative || shape == ShapeExhaustive {
+		if itemCount < 0 {
+			itemCount = 0
+		}
+		if itemCount > 1000 {
+			itemCount = 1000
+		}
 		base += itemCount * 300 // ~300 tokens per list item
 	}
 
@@ -740,7 +746,3 @@ func (m *Manager) GetModelID() string {
 	return m.modelID
 }
 
-// Helper to check if string contains another (case-insensitive)
-func containsIgnoreCase(s, substr string) bool {
-	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
-}
