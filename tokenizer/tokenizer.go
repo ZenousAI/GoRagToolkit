@@ -20,7 +20,10 @@
 package tokenizer
 
 import (
+	"log"
 	"sync"
+
+	"github.com/zenousai/goragtoolkit/message"
 )
 
 // Provider identifies the model provider
@@ -33,13 +36,8 @@ const (
 	ProviderUnknown   Provider = "unknown"
 )
 
-// Message represents a chat message for token counting
-type Message struct {
-	Role       string `json:"role"`
-	Content    string `json:"content"`
-	Name       string `json:"name,omitempty"`         // Optional: for function/tool messages
-	ToolCallID string `json:"tool_call_id,omitempty"` // Optional: for tool result messages
-}
+// Message is an alias for the shared message type.
+type Message = message.Message
 
 // Tokenizer provides token counting functionality for a specific model/encoding
 type Tokenizer interface {
@@ -81,6 +79,12 @@ type Tokenizer interface {
 	IsAccurate() bool
 }
 
+// maxCacheSize is the maximum number of tokenizers to cache.
+// When exceeded, the cache is cleared to prevent unbounded memory growth.
+// This is a simple strategy; accurate tokenizers (OpenAI, Claude, Cohere) are
+// re-created cheaply since their data is embedded. Estimators are trivial.
+const maxCacheSize = 256
+
 // tokenizer cache to avoid recreating tokenizers
 var (
 	tokenizerCache = make(map[string]Tokenizer)
@@ -89,7 +93,7 @@ var (
 
 // ForModel returns a tokenizer for the given model name.
 // It automatically detects the provider and selects the appropriate tokenizer.
-// The tokenizer is cached for reuse.
+// The tokenizer is cached for reuse (up to 256 entries; cache resets when full).
 //
 // Examples:
 //   - "gpt-4o", "gpt-5", "o3" -> OpenAI tiktoken tokenizer
@@ -107,8 +111,11 @@ func ForModel(modelName string) Tokenizer {
 	// Create new tokenizer
 	tok := createTokenizer(modelName)
 
-	// Cache it
+	// Cache it, evicting all entries if cache is full
 	cacheMu.Lock()
+	if len(tokenizerCache) >= maxCacheSize {
+		tokenizerCache = make(map[string]Tokenizer)
+	}
 	tokenizerCache[modelName] = tok
 	cacheMu.Unlock()
 
@@ -156,7 +163,7 @@ func createTokenizer(modelName string) Tokenizer {
 	case ProviderOpenAI:
 		tok, err := newTiktokenTokenizer(modelName)
 		if err != nil {
-			// Fall back to estimator if tiktoken fails
+			log.Printf("goragtoolkit/tokenizer: accurate tokenizer failed for %q (provider=%s), falling back to estimation: %v", modelName, provider, err)
 			return newEstimator(modelName, provider)
 		}
 		return tok
@@ -164,7 +171,7 @@ func createTokenizer(modelName string) Tokenizer {
 	case ProviderAnthropic:
 		tok, err := newClaudeTokenizer(modelName)
 		if err != nil {
-			// Fall back to estimator if Claude tokenizer fails
+			log.Printf("goragtoolkit/tokenizer: accurate tokenizer failed for %q (provider=%s), falling back to estimation: %v", modelName, provider, err)
 			return newEstimator(modelName, provider)
 		}
 		return tok
@@ -172,7 +179,7 @@ func createTokenizer(modelName string) Tokenizer {
 	case ProviderCohere:
 		tok, err := newCohereTokenizer(modelName)
 		if err != nil {
-			// Fall back to estimator if Cohere tokenizer fails
+			log.Printf("goragtoolkit/tokenizer: accurate tokenizer failed for %q (provider=%s), falling back to estimation: %v", modelName, provider, err)
 			return newEstimator(modelName, provider)
 		}
 		return tok

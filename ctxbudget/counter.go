@@ -25,15 +25,7 @@ func (tc *tokenizerCounter) Count(text string) int {
 // CountMessages returns total tokens for a list of messages.
 // This accounts for message overhead (role tokens, separators, etc.)
 func (tc *tokenizerCounter) CountMessages(msgs []Message) int {
-	// Convert to tokenizer.Message format
-	tokMsgs := make([]tokenizer.Message, len(msgs))
-	for i, m := range msgs {
-		tokMsgs[i] = tokenizer.Message{
-			Role:    m.Role,
-			Content: m.Content,
-		}
-	}
-	return tc.tok.CountMessages(tokMsgs)
+	return tc.tok.CountMessages(msgs)
 }
 
 // estimatorCounter provides a simple estimation-based counter for testing

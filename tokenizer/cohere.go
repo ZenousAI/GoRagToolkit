@@ -14,12 +14,13 @@ var cohereTokenizerData embed.FS
 // cohereTokenizer implements tokenization for Cohere models
 // using the BPE tokenizer vocabulary from HuggingFace
 type cohereTokenizer struct {
-	model        string
-	vocab        map[string]int
-	reverseVocab map[int]string
-	merges       []bpeMerge
-	initialized  bool
-	initMu       sync.Mutex
+	model         string
+	vocab         map[string]int
+	reverseVocab  map[int]string
+	merges        []bpeMerge
+	mergePriority map[string]int // cached merge priority map, built once at init
+	initialized   bool
+	initMu        sync.Mutex
 }
 
 // newCohereTokenizer creates a new Cohere tokenizer
@@ -73,8 +74,9 @@ func (c *cohereTokenizer) loadTokenizerJSON(data []byte) error {
 		c.reverseVocab[id] = token
 	}
 
-	// Parse merge rules
+	// Parse merge rules and build priority map once
 	c.merges = make([]bpeMerge, 0, len(tj.Model.Merges))
+	c.mergePriority = make(map[string]int, len(tj.Model.Merges))
 	for _, merge := range tj.Model.Merges {
 		parts := strings.SplitN(merge, " ", 2)
 		if len(parts) == 2 {
@@ -82,6 +84,8 @@ func (c *cohereTokenizer) loadTokenizerJSON(data []byte) error {
 				pair:   [2]string{parts[0], parts[1]},
 				result: parts[0] + parts[1],
 			})
+			key := parts[0] + "\x00" + parts[1]
+			c.mergePriority[key] = len(c.merges) - 1
 		}
 	}
 
@@ -123,7 +127,8 @@ func (c *cohereTokenizer) tokenize(text string) []string {
 	return result
 }
 
-// bpeEncode encodes a single word using BPE
+// bpeEncode encodes a single word using BPE.
+// Uses the pre-built mergePriority map for O(1) lookups per pair.
 func (c *cohereTokenizer) bpeEncode(word string) []string {
 	// Start with individual characters
 	symbols := make([]string, 0, len(word))
@@ -135,14 +140,7 @@ func (c *cohereTokenizer) bpeEncode(word string) []string {
 		return symbols
 	}
 
-	// Build merge priority map
-	mergePriority := make(map[string]int, len(c.merges))
-	for i, merge := range c.merges {
-		key := merge.pair[0] + "\x00" + merge.pair[1]
-		mergePriority[key] = i
-	}
-
-	// Iteratively apply merges
+	// Iteratively apply merges using cached priority map
 	for {
 		// Find the best merge
 		bestIdx := -1
@@ -150,7 +148,7 @@ func (c *cohereTokenizer) bpeEncode(word string) []string {
 
 		for i := 0; i < len(symbols)-1; i++ {
 			key := symbols[i] + "\x00" + symbols[i+1]
-			if priority, ok := mergePriority[key]; ok && priority < bestPriority {
+			if priority, ok := c.mergePriority[key]; ok && priority < bestPriority {
 				bestPriority = priority
 				bestIdx = i
 			}
@@ -212,7 +210,9 @@ func (c *cohereTokenizer) Truncate(text string, maxTokens int) string {
 		return text
 	}
 
-	return strings.Join(tokens[:maxTokens], "")
+	// Join truncated tokens and ensure valid UTF-8 by re-encoding through runes
+	joined := strings.Join(tokens[:maxTokens], "")
+	return string([]rune(joined))
 }
 
 // TruncateMessages truncates messages to fit within maxTokens

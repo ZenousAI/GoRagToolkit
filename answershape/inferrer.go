@@ -6,13 +6,77 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
+
+// cacheEntry holds a cached inference result with its expiration time.
+type cacheEntry struct {
+	result    *InferenceResult
+	expiresAt time.Time
+}
+
+// ttlCache is a simple TTL-aware cache with a max size limit.
+type ttlCache struct {
+	mu      sync.RWMutex
+	entries map[string]cacheEntry
+	ttl     time.Duration
+	maxSize int
+}
+
+const defaultMaxCacheSize = 10000
+
+func newTTLCache(ttlSeconds int, maxSize int) *ttlCache {
+	if maxSize <= 0 {
+		maxSize = defaultMaxCacheSize
+	}
+	return &ttlCache{
+		entries: make(map[string]cacheEntry),
+		ttl:     time.Duration(ttlSeconds) * time.Second,
+		maxSize: maxSize,
+	}
+}
+
+func (c *ttlCache) Load(key string) (*InferenceResult, bool) {
+	c.mu.RLock()
+	entry, ok := c.entries[key]
+	c.mu.RUnlock()
+	if !ok {
+		return nil, false
+	}
+	if time.Now().After(entry.expiresAt) {
+		// Expired — remove lazily
+		c.mu.Lock()
+		delete(c.entries, key)
+		c.mu.Unlock()
+		return nil, false
+	}
+	return entry.result, true
+}
+
+func (c *ttlCache) Store(key string, result *InferenceResult) {
+	c.mu.Lock()
+	// Evict all entries when cache is full to keep it simple and bounded
+	if len(c.entries) >= c.maxSize {
+		c.entries = make(map[string]cacheEntry)
+	}
+	c.entries[key] = cacheEntry{
+		result:    result,
+		expiresAt: time.Now().Add(c.ttl),
+	}
+	c.mu.Unlock()
+}
+
+func (c *ttlCache) Clear() {
+	c.mu.Lock()
+	c.entries = make(map[string]cacheEntry)
+	c.mu.Unlock()
+}
 
 // PatternInferrer uses pattern matching to infer answer shapes
 type PatternInferrer struct {
 	config   *Config
 	patterns *patternSet
-	cache    *sync.Map
+	cache    *ttlCache
 }
 
 // patternSet contains compiled regex patterns for shape detection
@@ -41,7 +105,7 @@ func NewPatternInferrer(cfg *Config) *PatternInferrer {
 	return &PatternInferrer{
 		config:   cfg,
 		patterns: buildPatternSet(),
-		cache:    &sync.Map{},
+		cache:    newTTLCache(cfg.CacheTTLSeconds, defaultMaxCacheSize),
 	}
 }
 
@@ -55,7 +119,7 @@ func (p *PatternInferrer) InferWithContext(ctx context.Context, query string, hi
 	// Check cache first
 	if p.config.EnableCaching {
 		if cached, ok := p.cache.Load(strings.ToLower(query)); ok {
-			return cached.(*InferenceResult), nil
+			return cached, nil
 		}
 	}
 
@@ -671,5 +735,5 @@ func compilePatterns(patterns []struct {
 
 // ClearCache clears the inference cache
 func (p *PatternInferrer) ClearCache() {
-	p.cache = &sync.Map{}
+	p.cache.Clear()
 }

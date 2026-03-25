@@ -613,32 +613,39 @@ func (m *Manager) countMessagesTokens(messages []Message) int {
 	return total
 }
 
-// truncateContent truncates text content to fit within token limit
-// Uses head+tail strategy per design doc: 40% head, 40% tail
+// truncateContent truncates text content to fit within token limit.
+// Uses head+tail strategy: 40% head, 40% tail, 20% for the truncation marker.
+// All slicing operates on runes to preserve valid UTF-8.
 func (m *Manager) truncateContent(content string, maxTokens int) string {
 	currentTokens := m.counter.Count(content)
 	if currentTokens <= maxTokens {
 		return content
 	}
 
+	runes := []rune(content)
+
 	// Calculate target lengths
 	headTokens := maxTokens * 40 / 100
 	tailTokens := maxTokens * 40 / 100
 	// Middle 20% is for the truncation marker
 
-	// Estimate character positions (rough: 4 chars per token)
-	headChars := headTokens * 4
-	tailChars := tailTokens * 4
+	// Estimate rune positions (rough: 4 chars per token)
+	headRunes := headTokens * 4
+	tailRunes := tailTokens * 4
 
-	if headChars >= len(content) {
-		headChars = len(content) / 2
+	if headRunes >= len(runes) {
+		headRunes = len(runes) / 2
 	}
-	if tailChars >= len(content) {
-		tailChars = len(content) / 2
+	if tailRunes >= len(runes) {
+		tailRunes = len(runes) / 2
+	}
+	if headRunes+tailRunes >= len(runes) {
+		headRunes = len(runes) / 2
+		tailRunes = len(runes) - headRunes
 	}
 
-	head := content[:headChars]
-	tail := content[len(content)-tailChars:]
+	head := string(runes[:headRunes])
+	tail := string(runes[len(runes)-tailRunes:])
 
 	return head + "\n\n[... content truncated for length ...]\n\n" + tail
 }

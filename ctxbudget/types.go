@@ -21,6 +21,12 @@
 //	})
 package ctxbudget
 
+import "github.com/zenousai/goragtoolkit/message"
+
+// Message is an alias for the shared message type.
+// Only Role and Content fields are used by ctxbudget.
+type Message = message.Message
+
 // AllocationStrategy controls how budget is distributed among components
 type AllocationStrategy string
 
@@ -57,12 +63,6 @@ const (
 	// Maintains answer diversity at the cost of potentially dropping high-scoring duplicates.
 	SourceTruncateDiversity SourceTruncationMode = "diversity"
 )
-
-// Message represents a chat message for context management
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
 
 // Source represents a retrieved source/SU for context
 type Source struct {

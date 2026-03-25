@@ -2,6 +2,8 @@
 // It is the single source of truth for model metadata across all major providers.
 package catalog
 
+import "sync"
+
 // ModelType represents the type of model
 type ModelType string
 
@@ -55,20 +57,29 @@ type Catalog struct {
 	Providers []ProviderCatalog `json:"providers"`
 }
 
-// GetCatalog returns the complete model catalog
+var (
+	catalogOnce     sync.Once
+	catalogInstance *Catalog
+)
+
+// GetCatalog returns the complete model catalog.
+// The catalog is built once and cached for the lifetime of the process.
 func GetCatalog() *Catalog {
-	return &Catalog{
-		Version: "1.0.0",
-		Providers: []ProviderCatalog{
-			getOpenAICatalog(),
-			getCohereeCatalog(),
-			getAnthropicCatalog(),
-			getBedrockCatalog(),
-			getHuggingFaceCatalog(),
-			getLMStudioCatalog(),
-			getGroqCatalog(),
-		},
-	}
+	catalogOnce.Do(func() {
+		catalogInstance = &Catalog{
+			Version: "1.0.0",
+			Providers: []ProviderCatalog{
+				getOpenAICatalog(),
+				getCohereeCatalog(),
+				getAnthropicCatalog(),
+				getBedrockCatalog(),
+				getHuggingFaceCatalog(),
+				getLMStudioCatalog(),
+				getGroqCatalog(),
+			},
+		}
+	})
+	return catalogInstance
 }
 
 // GetProviderCatalog returns the catalog for a specific provider

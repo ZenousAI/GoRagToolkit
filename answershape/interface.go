@@ -4,6 +4,8 @@ package answershape
 
 import (
 	"context"
+
+	"github.com/zenousai/goragtoolkit/message"
 )
 
 // Shape represents the expected structure of an answer
@@ -134,11 +136,8 @@ type Inferrer interface {
 	InferWithContext(ctx context.Context, query string, history []Message) (*InferenceResult, error)
 }
 
-// Message represents a conversation message for context
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
+// Message is an alias for the shared message type.
+type Message = message.Message
 
 // Config contains configuration for the answer shape inferrer
 type Config struct {
